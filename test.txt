@@ -1,1 +1,56 @@
+from bisect import bisect_left, insort
+from typing import List, Tuple, Any, Optional
 
+class BinBucketHash:
+    """Hash table whose buckets remain *sorted* so we can bisect collisions."""
+    __slots__ = ("_size", "_mask", "_buckets")
+
+    def __init__(self, capacity: int = 8):
+        # next power-of-two gives us a cheap mask instead of % modulus
+        self._size = 0
+        self._mask = (1 << (capacity - 1).bit_length()) - 1
+        self._buckets: List[List[Tuple[Any, Any]]] = [[] for _ in range(self._mask + 1)]
+
+    # ---------- public API ----------
+    def __setitem__(self, key, value):
+        b = self._bucket(key)
+        i = self._index_in_bucket(b, key)
+        if i is None:                      # new insert
+            insort(b, (key, value))        # O(log m) inside bucket
+            self._size += 1
+            if self._size > len(self._buckets) * 4:   # crude 4-load-factor
+                self._resize()
+        else:                              # overwrite
+            b[i] = (key, value)
+
+    def __getitem__(self, key):
+        b = self._bucket(key)
+        i = self._index_in_bucket(b, key)
+        if i is None:
+            raise KeyError(key)
+        return b[i][1]
+
+    # ---------- helpers ----------
+    def _bucket(self, key):
+        return self._buckets[hash(key) & self._mask]
+
+    def _index_in_bucket(self, bucket, key) -> Optional[int]:
+        """Binary-search the sorted bucket. Return index or None."""
+        i = bisect_left(bucket, (key, ...))
+        return i if i < len(bucket) and bucket[i][0] == key else None
+
+    def _resize(self):
+        old = self._buckets
+        self._mask = (self._mask << 1) | 1          # double size, keep bitmask shape
+        self._buckets = [[] for _ in range(self._mask + 1)]
+        self._size = 0
+        for bucket in old:
+            for k, v in bucket:
+                self[k] = v                         # reinserts (re-bisection)
+
+    # ---------- niceties ----------
+    def __len__(self):
+        return self._size
+
+    def __contains__(self, key):
+        return self._index_in_bucket(self._bucket(key), key) is not None
